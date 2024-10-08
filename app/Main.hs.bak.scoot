@@ -1,0 +1,155 @@
+{-# LANGUAGE FlexibleContexts #-}
+{-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE RecordWildCards #-}
+
+module Main (main) where
+
+-- All imports are explicit so we can see exactly where each function comes from
+
+-- The AWST transformer from Control.Monad.Trans.AWS has been removed.
+-- Functions such as send now take an Env as their first argument.
+-- You can provide an Env directly, or use whatever transformer or effect system you prefer.
+--
+-- import Control.Monad.Trans.AWS
+-- ( AWST'
+-- , Credentials(..)
+-- , Env
+-- , HasEnv
+-- , LogLevel(..)
+-- , Region(..)
+-- , envLogger
+-- , newEnv
+-- , newLogger
+-- , reconfigure
+-- , runAWST
+-- , runResourceT
+-- , send
+-- , setEndpoint
+-- , within
+-- )
+
+-- Modules have been moved from Network.AWS.* to Amazonka.*.
+import Amazonka (LogLevel (..), Region (NorthVirginia), Service, await, discover, newLogger, runResourceT, send, setEndpoint)
+import Amazonka.DynamoDB
+  ( AttributeDefinition,
+    AttributeValue,
+    CreateTable,
+    DeleteTable,
+    DescribeTable,
+    GetItem,
+    KeySchemaElement,
+    KeyType (..),
+    ProvisionedThroughput,
+    PutItem,
+    ScalarAttributeType (..),
+    UpdateItem,
+    defaultService,
+    newCreateTable,
+    newKeySchemaElement,
+    _ResourceInUseException,
+    _ResourceNotFoundException,
+  )
+import Amazonka.Env
+import Control.Exception.Lens (handling)
+import Control.Lens (set, (&), (.~), (<&>), (^.))
+import Control.Monad (void, when)
+import Control.Monad.IO.Class (MonadIO)
+import Control.Monad.Trans.Resource (ResourceT)
+import Data.ByteString (ByteString)
+import qualified Data.HashMap.Strict as HashMap (fromList, lookup)
+import Data.List.NonEmpty (NonEmpty (..))
+import Data.Text (Text)
+import qualified Data.Text as Text (null, pack)
+import Data.Text.Read (decimal)
+import System.IO (stdout)
+
+-- Set up context
+type HostName = ByteString
+
+type Port = Int
+
+data LoggingState = LoggingEnabled | LoggingDisabled
+
+data ServiceType = AWS Env | Local HostName Port -- previously Region
+
+data DBInfo = DBInfo
+  { env :: Env,
+    service :: Service,
+    region :: Region,
+    tableName :: Text
+  }
+
+intToText :: Int -> Text
+intToText = Text.pack . show
+
+parseInt :: Text -> Maybe Int
+parseInt s = case decimal s of
+  Left _ -> Nothing
+  Right (result, s') -> if Text.null s' then Just result else Nothing
+
+-- Constructor for data type DBInfserviceo
+getDBInfo :: LoggingState -> ServiceType -> IO DBInfo
+getDBInfo loggingState serviceType = do
+  env <- getEnv loggingState
+  -- let (_, region) = serviceRegion serviceType TODO: hard coding this
+  return $ DBInfo env Amazonka.DynamoDB.defaultService NorthVirginia "table" -- TODO: Is service correct here?
+  where
+    -- Standard discovery mechanism for credentials, log to standard output
+    getEnv LoggingEnabled = do
+      logger <- newLogger Debug stdout
+      newEnv discover <&> set env_logger logger
+    -- Standard discovery mechanism for credentials, no logging
+    getEnv LoggingDisabled = newEnv discover
+
+    -- Run against a DynamoDB instance running on AWS in specified region
+    serviceRegion (AWS region) = (Env, region)
+    -- Run against a local DynamoDB instance on a given host and port
+    serviceRegion (Local hostName port) = (setEndpoint False hostName port Amazonka.DynamoDB.defaultService, NorthVirginia)
+
+-- TODO: This is the meat and potatoes. `runResourceT` does the business.
+withDynamoDB ::
+  Env ->
+  Service ->
+  Region ->
+  m a
+withDynamoDB env service region action =
+  runResourceT . within region $ do
+    reconfigure service action
+
+-- Creates a table in DynamoDB and waits until table is in active state
+-- Demonstrates:
+
+-- * Use of runResourceT, runAWST
+
+-- * Use of reconfigure
+
+-- * How to handle exceptions in lenses
+
+-- * Basic use of amazonka-style lenses
+
+-- * How to wait on an asynchronous operation
+
+doCreateTableIfNotExists :: DBInfo -> IO ()
+doCreateTableIfNotExists DBInfo {..} = withDynamoDB env service region $ do
+  exists <- handling _ResourceInUseException (const (pure True)) $ do
+    void $
+      send $
+        newCreateTable
+          tableName
+          newKeySchemaElement
+          "counter_name"
+    -- (keySchemaElement "counter_name" Hash :| [])
+    -- (provisionedThroughput 5 5)
+    -- :when& ctAttributeDefinitions .~ [attributeDefinition "counter_name" S]
+    return False
+  when (not exists) (void $ await tableExists (describeTable tableName))
+
+main :: IO ()
+main = do
+  -- db <- getDBInfo LoggingEnabled (AWS Ohio)
+  db <- getDBInfo LoggingDisabled (Local "localhost" 8000)
+
+  putStrLn "CreateTable"
+  doCreateTableIfNotExists db
+
+  "done"

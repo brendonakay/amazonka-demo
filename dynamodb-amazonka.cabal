@@ -62,7 +62,8 @@ executable dynamodb-amazonka
     main-is:          Main.hs
 
     -- Modules included in this executable, other than Main.
-    -- other-modules:
+    other-modules:
+      DynamoDB
 
     -- LANGUAGE extensions used by modules in this package.
     -- other-extensions:
@@ -73,7 +74,6 @@ executable dynamodb-amazonka
                     , amazonka-s3
                     , base ^>=4.18.2.1
                     , bytestring
-                    --, dynamodb-demo
                     , lens
                     , resourcet
                     , text

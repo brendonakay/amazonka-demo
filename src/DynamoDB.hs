@@ -16,6 +16,7 @@ import Amazonka.DynamoDB
     newGetItem,
     newKeySchemaElement,
     newPutItem,
+    newQuery,
   )
 import Amazonka.DynamoDB.Lens
   ( createTableResponse_tableDescription,
@@ -23,11 +24,12 @@ import Amazonka.DynamoDB.Lens
     createTable_billingMode,
     deleteTableResponse_tableDescription,
     describeTableResponse_table,
-    putItemResponse_attributes,
-    putItemResponse_consumedCapacity,
-    putItemResponse_httpStatus,
-    putItemResponse_itemCollectionMetrics,
+    getItemResponse_item,
+    getItem_key,
     putItem_item,
+    queryResponse_items,
+    query_expressionAttributeValues,
+    query_keyConditionExpression,
   )
 import Amazonka.DynamoDB.ListTables
 import Amazonka.S3.ListBuckets
@@ -35,6 +37,10 @@ import Control.Lens
 import qualified Data.HashMap.Strict as HM
 import Data.List.NonEmpty
 import Data.Text (Text)
+
+-- TODO:
+--  - Change return type on functions to be JSON or some other structured format.
+--      Make our own internal type?
 
 exampleS3 :: AWS.Env -> IO ()
 exampleS3 env = do
@@ -105,11 +111,24 @@ exampleDynamoDBDescribeTable env = do
         newDescribeTable "MyTable"
   print $ respCreate ^. describeTableResponse_table
 
--- TODO: Implement this
--- exampleDynamoDBGetItem :: AWS.Env -> IO ()
--- exampleDynamoDBGetItem env = do
---   respCreate <-
---     AWS.runResourceT $
---       AWS.send env $
---         newGetItem "MyTable"
---   print $ respCreate ^. describeTableResponse_table
+exampleDynamoDBGetItem :: AWS.Env -> IO ()
+exampleDynamoDBGetItem env = do
+  respCreate <-
+    AWS.runResourceT $
+      AWS.send env $
+        newGetItem
+          "MyTable"
+          & getItem_key .~ HM.fromList [("PrimaryKey", S "Foo")]
+  print $ respCreate ^. getItemResponse_item
+
+exampleDynamoDBQuery :: AWS.Env -> IO ()
+exampleDynamoDBQuery env = do
+  -- TODO: Add filter expressions
+  respCreate <-
+    AWS.runResourceT $
+      AWS.send env $
+        newQuery
+          "MyTable"
+          & query_keyConditionExpression ?~ "PrimaryKey = :pk"
+          & query_expressionAttributeValues .~ pure (HM.fromList [(":pk", S "Foo")])
+  print $ respCreate ^. queryResponse_items
